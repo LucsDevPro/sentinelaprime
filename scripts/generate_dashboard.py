@@ -493,16 +493,121 @@ def build_kpi_geral(resumo):
                 total_recusados=total_recusados, total_geral=total_geral, pct_pendencia=pct_pendencia,
                 n_normal=n_normal, n_atencao=n_atencao, n_critico=n_critico)
 
-def _custos_base(resumo):
-    """Colunas numéricas limpas + base de presença pro painel de custos.
+# ---- leitura rápida das planilhas (custos) --------------------------------
+
+def _ler_tabela_rapida(path, aba, colunas):
+    """Primeira tabela de uma aba (modo somente-leitura, bem mais rápido que carregar
+    o arquivo inteiro). Devolve [{coluna: valor}] só com as `colunas` pedidas."""
+    import openpyxl
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        if aba not in wb.sheetnames:
+            return []
+        header, idx, out = None, {}, []
+        for vals in wb[aba].iter_rows(values_only=True):
+            if header is None:
+                if vals and all(c in vals for c in colunas):
+                    header = list(vals)
+                    idx = {c: header.index(c) for c in colunas}
+                continue
+            if not vals or vals[idx["Agente"]] is None:
+                break  # fim da tabela principal
+            out.append({c: vals[i] for c, i in idx.items()})
+        return out
+    finally:
+        wb.close()
+
+
+def _num(v):
+    try:
+        f = float(v)
+        return None if pd.isna(f) else f
+    except (TypeError, ValueError):
+        return None
+
+
+def _ler_presenca(path):
+    """{agente: (dias_trabalhados, dias_esperados)} da aba Ranking. Nos períodos
+    com o método novo de ranking, 'esperados' = dias úteis do período JÁ DESCONTADOS
+    férias, atestado, folga e paralisações coletivas (chuva, reunião, capacitação)
+    em que o agente não trabalhou — ver _preparar_ranking no coletor."""
+    out = {}
+    for r in _ler_tabela_rapida(path, "Ranking", ["Agente", "Dias Trabalhados", "Dias Úteis Esperados no Mês"]):
+        d, e = _num(r["Dias Trabalhados"]), _num(r["Dias Úteis Esperados no Mês"])
+        if d is not None and e is not None:
+            out[str(r["Agente"]).strip()] = (d, e)
+    return out
+
+
+def _meses_historico():
+    """[(label, caminho)] dos meses fechados, do mais antigo pro mais recente."""
+    manifest_path = ROOT / "data" / "historico" / "manifest.json"
+    if not manifest_path.exists():
+        return []
+    try:
+        entradas = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    entradas = sorted((e for e in entradas if LABEL_MES_RE.match(str(e.get("label", "")))),
+                      key=lambda e: e.get("semana_inicio", 0))
+    return [(e["label"], ROOT / "data" / "historico" / e["arquivo"]) for e in entradas
+            if (ROOT / "data" / "historico" / e["arquivo"]).exists()]
+
+
+_PRESENCA_CACHE = {}
+
+
+def _presenca_da_pagina():
+    """Presença da página que está sendo gerada. Página de um mês (ou de uma semana):
+    lê o próprio Ranking. Acumulado: o Ranking dele usa a regra antiga (esperados = 1
+    mês de referência), então soma os dias trabalhados e esperados de cada mês."""
+    chave = str(XLSX_PATH)
+    if chave in _PRESENCA_CACHE:
+        return _PRESENCA_CACHE[chave]
+    if Path(XLSX_PATH).name == "Analise_Consolidada.xlsx":
+        total = {}
+        for _label, caminho in _meses_historico():
+            for ag, (d, e) in _ler_presenca(caminho).items():
+                t = total.get(ag, (0.0, 0.0))
+                total[ag] = (t[0] + d, t[1] + e)
+        pres = total
+    else:
+        pres = _ler_presenca(XLSX_PATH)
+    _PRESENCA_CACHE[chave] = pres
+    return pres
+
+
+# ---- painel Custos & Produtividade -----------------------------------------
+
+def _preparar_custos(d, presenca):
+    """Acrescenta ao DataFrame (já com _hu/_ht/_hs/_dias/_vd) a presença e o custo real.
 
     Dois custos por hora, de propósito:
-      * NO RITMO  = salário ÷ (horas úteis/dia × 22). Só vale enquanto o agente
-        trabalha — quem falta muito não é penalizado por isso.
-      * REAL      = custo no ritmo × (dias do período ÷ dias que o agente trabalhou).
-        É o salário do período ÷ horas úteis que ele de fato produziu: inclui os
-        dias sem trabalhar (falta, férias, atestado — qualquer motivo).
-    "Dias do período" = dias do agente que mais trabalhou (referência do período)."""
+      * NO RITMO = salário ÷ (horas úteis/dia × 22). Só vale enquanto o agente trabalha:
+        quem falta muito não é penalizado por isso.
+      * REAL     = salário dos dias que ele DEVIA trabalhar ÷ horas úteis que produziu.
+        Os dias esperados já descontam férias, atestado, folga e paralisações coletivas
+        (ver _ler_presenca); só falta sem justificativa encarece a hora.
+    Sem a aba Ranking (planilha antiga), cai pro dia do agente que mais trabalhou."""
+    d = d.copy()
+    ref_fallback = float(d["_dias"].max()) if len(d) else 0.0
+    dias, esp = [], []
+    for ag, dias_res in zip(d["Agente"], d["_dias"]):
+        p = presenca.get(str(ag).strip())
+        dias.append(p[0] if p else dias_res)
+        esp.append(p[1] if p else ref_fallback)
+    d["_dias"], d["_esp"] = dias, esp
+    # trabalhou mais que o esperado (dia extra): o custo não cai abaixo do "no ritmo"
+    d["_esp"] = d[["_esp", "_dias"]].max(axis=1)
+    # sem nenhum dia esperado (afastado o período todo) ou sem dia trabalhado: não há custo a medir
+    d = d[(d["_esp"] > 0) & (d["_dias"] > 0)].copy()
+    d["_pres"] = (d["_dias"] / d["_esp"]).clip(upper=1.0)
+    d["_folha"] = SALARIO_MENSAL * d["_esp"] / DIAS_UTEIS_MES_REF
+    d["_custo_real"] = d["CustoNum"] / d["_pres"]
+    return d
+
+
+def _custos_base(resumo):
     d = resumo.copy()
     for col, novo in [("Média Horas Úteis/Dia", "_hu"), ("Média Horas Trabalhadas/Dia", "_ht"),
                       ("Média Horas Trabalhadas/Semana", "_hs"), ("Dias Trabalhados", "_dias"),
@@ -511,10 +616,10 @@ def _custos_base(resumo):
     d = d[d["CustoNum"].notna() & (d["_hu"] > 0) & (d["_dias"] > 0)].copy()
     if d.empty:
         return d, 0
-    ref = float(d["_dias"].max())
-    d["_pres"] = (d["_dias"] / ref).clip(upper=1.0)
-    d["_custo_real"] = d["CustoNum"] / d["_pres"]
-    return d, int(ref)
+    d = _preparar_custos(d, _presenca_da_pagina())
+    if d.empty:
+        return d, 0
+    return d, int(round(d["_esp"].max()))
 
 
 def adicionar_custo_real(resumo):
@@ -528,11 +633,6 @@ def adicionar_custo_real(resumo):
     return resumo
 
 
-def _folha_periodo(n, ref):
-    """Salário de n agentes pelos `ref` dias do período."""
-    return SALARIO_MENSAL * n * ref / DIAS_UTEIS_MES_REF
-
-
 def _custo_ritmo_agregado(d):
     """Folha ÷ horas úteis do mês de todos juntos (só dias trabalhados). A média
     simples dos custos individuais dá número maior: quem tem poucas horas úteis
@@ -541,14 +641,14 @@ def _custo_ritmo_agregado(d):
     return SALARIO_MENSAL * len(d) / horas_mes if horas_mes > 0 else None
 
 
-def _custo_real_agregado(d, ref):
+def _custo_real_agregado(d):
     horas = (d["_hu"] * d["_dias"]).sum()
-    return _folha_periodo(len(d), ref) / horas if horas > 0 else None
+    return d["_folha"].sum() / horas if horas > 0 else None
 
 
-def _custo_visita_agregado(d, ref):
+def _custo_visita_agregado(d):
     visitas = (d["_vd"] * d["_dias"]).sum()
-    return _folha_periodo(len(d), ref) / visitas if visitas > 0 else None
+    return d["_folha"].sum() / visitas if visitas > 0 else None
 
 
 def build_kpi_custos(resumo):
@@ -562,12 +662,12 @@ def build_kpi_custos(resumo):
         return vazio
     idx_min, idx_max = d["_custo_real"].idxmin(), d["_custo_real"].idxmax()
     return dict(
-        custo_real=_custo_real_agregado(d, ref),
+        custo_real=_custo_real_agregado(d),
         custo_ritmo=_custo_ritmo_agregado(d),
         custo_media_simples=d["CustoNum"].mean(),
         custo_min=d.loc[idx_min, "_custo_real"], custo_min_agente=d.loc[idx_min, "Agente"],
         custo_max=d.loc[idx_max, "_custo_real"], custo_max_agente=d.loc[idx_max, "Agente"],
-        custo_visita=_custo_visita_agregado(d, ref),
+        custo_visita=_custo_visita_agregado(d),
         horas_dia_media=d["_ht"].mean(),
         horas_semana_media=d["_hs"].mean(),
         horas_uteis_media=d["_hu"].mean(),
@@ -592,7 +692,7 @@ def build_custos_rows(resumo):
     custo real, custo por visita e faixas de cor. Ordenada do custo real mais alto pro mais baixo."""
     if resumo.empty or "CustoNum" not in resumo.columns:
         return []
-    d, ref = _custos_base(resumo)
+    d, _ = _custos_base(resumo)
     ordenado = resumo.copy()
     ordenado["_ord"] = d["_custo_real"].reindex(ordenado.index)
     ordenado = ordenado.sort_values("_ord", ascending=False, na_position="last")
@@ -602,17 +702,19 @@ def build_custos_rows(resumo):
         row["custo_ritmo_num"] = n(ordenado.loc[idx, "CustoNum"])
         if r is None:
             row.update(presenca=None, aproveitamento=None, custo_real=None, custo_visita=None,
-                       faixa_ritmo="", faixa_real="", faixa_presenca="")
+                       faixa_ritmo="", faixa_real="", faixa_presenca="", dias_esperados=None)
             continue
         pres = r["_pres"] * 100
         row["presenca"] = pres
+        row["dias_esperados"] = r["_esp"]
+        row["dias_trabalhados"] = r["_dias"]
         row["faixa_presenca"] = _faixa_presenca(pres)
         row["aproveitamento"] = (r["_hu"] / r["_ht"] * 100) if r["_ht"] > 0 else None
         row["custo_real"] = r["_custo_real"]
         row["faixa_ritmo"] = _faixa_custo(row["custo_ritmo_num"])
         row["faixa_real"] = _faixa_custo(r["_custo_real"])
         visitas = r["_vd"] * r["_dias"]
-        row["custo_visita"] = _folha_periodo(1, ref) / visitas if visitas > 0 else None
+        row["custo_visita"] = r["_folha"] / visitas if visitas > 0 else None
     return linhas
 
 
@@ -620,19 +722,64 @@ def build_custos_equipes(resumo):
     """Uma linha por equipe, com o mesmo cálculo dos números gerais."""
     if resumo.empty or "CustoNum" not in resumo.columns:
         return []
-    d, ref = _custos_base(resumo)
+    d, _ = _custos_base(resumo)
     linhas = []
     for equipe, g in d.groupby("Equipe"):
-        real = _custo_real_agregado(g, ref)
+        real = _custo_real_agregado(g)
         pres = g["_pres"].mean() * 100
         linhas.append(dict(
             equipe=equipe, n=len(g), presenca=pres, faixa_presenca=_faixa_presenca(pres),
             horas_trab_dia=g["_ht"].mean(), horas_uteis_dia=g["_hu"].mean(),
             aproveitamento=(g["_hu"].sum() / g["_ht"].sum() * 100) if g["_ht"].sum() > 0 else None,
             custo_ritmo=_custo_ritmo_agregado(g), custo_real=real, faixa=_faixa_custo(real),
-            custo_visita=_custo_visita_agregado(g, ref), folha=SALARIO_MENSAL * len(g),
+            custo_visita=_custo_visita_agregado(g), folha=SALARIO_MENSAL * len(g),
         ))
     return sorted(linhas, key=lambda x: x["equipe"])
+
+
+def build_custos_mensais():
+    """Custo real da hora útil de cada agente MÊS A MÊS + média dos meses.
+    Mesma conta do painel (férias/atestado descontados antes), aplicada a cada mês fechado."""
+    meses, por_agente = [], {}
+    for label, caminho in _meses_historico():
+        try:
+            linhas = _ler_tabela_rapida(caminho, "Resumo Geral",
+                                        ["Agente", "Equipe", "Dias Trabalhados", "Visitas/Dia",
+                                         "Média Horas Úteis/Dia", "Média Horas Trabalhadas/Dia", "Custo Hora Útil (R$)"])
+        except Exception:
+            continue
+        linhas = [l for l in linhas if l["Equipe"] != EQUIPE_BLOQUEIO and str(l["Equipe"] or "").startswith("Equipe")]
+        if not linhas:
+            continue
+        df = pd.DataFrame(linhas)
+        df["CustoNum"] = df["Custo Hora Útil (R$)"].apply(parse_custo)
+        for col, novo in [("Média Horas Úteis/Dia", "_hu"), ("Média Horas Trabalhadas/Dia", "_ht"),
+                          ("Dias Trabalhados", "_dias"), ("Visitas/Dia", "_vd")]:
+            df[novo] = pd.to_numeric(df[col], errors="coerce")
+        df = df[df["CustoNum"].notna() & (df["_hu"] > 0) & (df["_dias"] > 0)]
+        if df.empty:
+            continue
+        df = _preparar_custos(df, _ler_presenca(caminho))
+        if df.empty:
+            continue
+        idx = len(meses)
+        meses.append(label)
+        for _, r in df.iterrows():
+            a = por_agente.setdefault(r["Agente"], {"agente": r["Agente"], "equipe": r["Equipe"], "valores": {}})
+            a["equipe"] = r["Equipe"]
+            a["valores"][idx] = dict(v=r["_custo_real"], faixa=_faixa_custo(r["_custo_real"]),
+                                     pres=r["_pres"] * 100, ritmo=r["CustoNum"])
+    agentes = []
+    for a in por_agente.values():
+        valores = [a["valores"].get(i) for i in range(len(meses))]
+        vs = [v["v"] for v in valores if v]
+        media = sum(vs) / len(vs)
+        agentes.append(dict(agente=a["agente"], equipe=a["equipe"], meses=valores, media=media,
+                            faixa=_faixa_custo(media), n_meses=len(vs),
+                            media_ritmo=sum(v["ritmo"] for v in valores if v) / len(vs),
+                            presenca=sum(v["pres"] for v in valores if v) / len(vs)))
+    agentes.sort(key=lambda x: x["media"], reverse=True)
+    return {"meses": meses, "agentes": agentes}
 
 
 def build_ausencias_agg(aus):
@@ -998,6 +1145,7 @@ def build_context(data):
         pe_semanas=pe["Semana"].nunique() if not pe.empty else 0,
         custos=build_custos_rows(resumo),
         custos_equipes=build_custos_equipes(resumo),
+        custos_mensais=build_custos_mensais(),
         dias_uteis_mes=DIAS_UTEIS_MES_REF, meta_visitas_dia=META_VISITAS_DIA_REF,
         custo_faixa_medio=CUSTO_FAIXA_MEDIO, custo_faixa_alto=CUSTO_FAIXA_ALTO, custo_grafico_max=CUSTO_GRAFICO_MAX,
         horas_uteis_baixo=HORAS_UTEIS_BAIXO, horas_uteis_alto=HORAS_UTEIS_ALTO,
