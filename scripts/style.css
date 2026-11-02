@@ -59,8 +59,14 @@ header h1 span { color: #2BA8E8; font-weight: 600; }
 .presentation-toggle { display: flex; align-items: center; gap: 6px; color: #9DB2D0; font-size: 0.78rem; cursor: pointer; user-select: none; }
 .presentation-toggle input { accent-color: var(--yellow); cursor: pointer; }
 .print-full-btn { margin-left: 0; }
-.period-select { background: #0C1F3A; color: #E6EDF7; border: 1px solid #2C568F; border-radius: 4px; padding: 7px 10px; font-size: 0.78rem; cursor: pointer; font-family: inherit; }
-.period-select option { background: #0C1F3A; color: var(--text); }
+/* Seletor de mês. O cabeçalho é azul-marinho escuro nos DOIS temas, então no tema claro
+   o seletor usa o azul dos botões (--navy) com borda clara pra não se confundir com o fundo. */
+.period-select { background: var(--navy); color: #fff; border: 1px solid #6F9BD1; border-radius: 4px; padding: 7px 10px; font-size: 0.78rem; cursor: pointer; font-family: inherit; }
+.period-select:hover { background: var(--navy2); border-color: var(--blue); }
+.period-select option { background: #fff; color: #12233B; }
+:root[data-theme="dark"] .period-select { background: #0C1F3A; color: #E6EDF7; border-color: #2C568F; }
+:root[data-theme="dark"] .period-select:hover { background: #102848; border-color: var(--blue); }
+:root[data-theme="dark"] .period-select option { background: #0C1F3A; color: #E6EDF7; }
 
 /* ---------- Abas: sublinhado amarelo na ativa ---------- */
 .nav-tabs { display: flex; gap: 0; flex-wrap: wrap; margin-bottom: 26px; border-bottom: 1px solid var(--border); }
