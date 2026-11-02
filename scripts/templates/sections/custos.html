@@ -1,54 +1,152 @@
-{% from "macros.html" import kpi as kpi_card, chart_card %}
+{% from "macros.html" import kpi as kpi_card %}
+{# Gráfico com legenda de cores logo abaixo do título (o chart_card padrão não tem). #}
+{% macro cst_chart(canvas_id, title, legenda, note, tall=False, wide=False) -%}
+<div class="chart-card"{% if wide %} style="grid-column: 1 / -1;"{% endif %}>
+  <h3>{{ title }}</h3>
+  {% if legenda %}<div class="cst-legenda">{% for cor, txt in legenda %}<span><i class="legend-square" style="background:{{ cor }}"></i>{{ txt }}</span>{% endfor %}</div>{% endif %}
+  <div class="chart-wrap{% if tall %} tall{% endif %}"><canvas id="{{ canvas_id }}"></canvas></div>
+  {% if note %}<p class="chart-note">{{ note|safe }}</p>{% endif %}
+</div>
+{%- endmacro %}
 <div class="section" id="custos">
+
+  {# ---------- 1. Como ler ---------- #}
+  <div class="legend-box cst-guia">
+    <p><strong>Como ler este painel.</strong> Ele responde a uma pergunta: <em>quanto custa cada hora em que o agente está de fato dentro de um imóvel?</em></p>
+    <div class="cst-conta">
+      <span class="cst-conta-t">A conta (média geral do período; resultado arredondado)</span>
+      <span class="cst-eq">
+        <b>R$ {{ salario_mensal|br(2) }}</b> <small>salário mensal</small>
+        <i>÷</i>
+        <b>{{ kc.horas_uteis_media|br(2) }} h × {{ dias_uteis_mes }} dias</b> <small>horas úteis por dia × dias úteis do mês</small>
+        <i>≈</i>
+        <b class="cst-res">R$ {{ kc.custo_medio|br(2) }}</b> <small>por hora útil</small>
+      </span>
+    </div>
+    <div class="cst-glossario">
+      <div><strong>Jornada</strong> — da primeira chegada à última saída do dia, descontando o horário de almoço. Inclui deslocamento.</div>
+      <div><strong>Horas úteis</strong> — soma do tempo dentro dos imóveis. <u>Cada visita conta no máximo {{ teto_visita_min }} min</u>, para que lançamentos com duração inflada não escondam o custo real.</div>
+      <div><strong>Aproveitamento</strong> — horas úteis ÷ jornada. Mostra quanto da jornada é gasto de fato em visita (o resto é deslocamento, espera e pausas).</div>
+      <div><strong>Custo por visita</strong> — salário ÷ (visitas por dia × {{ dias_uteis_mes }} dias). Mais fácil de comparar com a meta de produção.</div>
+    </div>
+    <ul class="cst-avisos">
+      <li>O custo supõe o mês cheio de <strong>{{ dias_uteis_mes }} dias úteis</strong> para todos: ele mede o <em>ritmo</em> do agente, não o gasto real com faltas, férias ou atestados.</li>
+      <li>Agentes com <strong>poucos dias</strong> no período (menos de {{ kc.corte_dias }} dias) aparecem esmaecidos na tabela. O custo deles varia muito com poucos dados, então ficam fora do <em>Menor</em> e do <em>Maior</em> custo, mas entram na média geral.</li>
+      <li>A média usa <strong>folha ÷ horas úteis de todos</strong>. A média simples dos custos individuais ({% if kc.custo_media_simples %}R$ {{ kc.custo_media_simples|br(2) }}{% else %}—{% endif %}) fica mais alta porque quem tem poucas horas úteis pesa o mesmo que quem tem muitas.</li>
+    </ul>
+  </div>
+
+  {# ---------- 2. Números principais ---------- #}
+  <h3 class="cst-titulo">💵 Quanto custa a hora de trabalho produtivo</h3>
   <div class="kpi-grid">
-    {{ kpi_card("blue", "Custo Médio Hora Útil", "R$ " ~ kc.custo_medio|br(2), "média entre os " ~ kpi.total_agentes ~ " agentes") }}
-    {{ kpi_card("green", "Custo Mínimo", "R$ " ~ kc.custo_min|br(2), kc.custo_min_agente) }}
-    {{ kpi_card("red", "Custo Máximo", "R$ " ~ kc.custo_max|br(2), kc.custo_max_agente) }}
-    {{ kpi_card("cyan", "Média Horas Trab./Dia", kc.horas_dia_media|br(1) ~ "h", "jornada total no dia") }}
-    {{ kpi_card("orange", "Média Horas Trab./Semana", kc.horas_semana_media|br(1) ~ "h", "soma da semana") }}
-    {{ kpi_card("yellow", "Média Horas Úteis/Dia", kc.horas_uteis_media|br(1) ~ "h", "tempo real em visitas") }}
+    {{ kpi_card("blue", "Custo da hora útil", "R$ " ~ kc.custo_medio|br(2), "geral: folha ÷ horas úteis de todos os " ~ kc.n_agentes ~ " agentes") }}
+    {{ kpi_card("green", "Menor custo", "R$ " ~ kc.custo_min|br(2), kc.custo_min_agente) }}
+    {{ kpi_card("red", "Maior custo", "R$ " ~ kc.custo_max|br(2), kc.custo_max_agente) }}
+    {{ kpi_card("cyan", "Custo por visita", ("R$ " ~ kc.custo_visita|br(2)) if kc.custo_visita else "—", "salário ÷ visitas do mês") }}
   </div>
-  <div class="legend-box">
-    <strong>Horas Trabalhadas</strong> = jornada total do dia (primeira chegada até a última saída), descontando sobreposição com o almoço.
-    <strong>Horas Úteis</strong> = soma das durações de visita no dia (tempo realmente dentro de imóveis), sem contar deslocamento.
-    <strong>Custo Hora Útil</strong> = salário mensal (R$ {{ salario_mensal|br(2) }}, equivalente a 3 salários mínimos federais) ÷ (Média Horas Úteis/Dia × 22 dias úteis).
+
+  <h3 class="cst-titulo">⏱️ Como o tempo é aproveitado</h3>
+  <div class="kpi-grid">
+    {{ kpi_card("orange", "Jornada por dia", kc.horas_dia_media|br(1) ~ "h", "primeira chegada até a última saída") }}
+    {{ kpi_card("yellow", "Horas úteis por dia", kc.horas_uteis_media|br(1) ~ "h", "tempo dentro dos imóveis") }}
+    {{ kpi_card("green", "Aproveitamento", (kc.aproveitamento|br(0) ~ "%") if kc.aproveitamento else "—", "horas úteis ÷ jornada") }}
+    {{ kpi_card("blue", "Jornada por semana", kc.horas_semana_media|br(1) ~ "h", "soma da semana, média dos agentes") }}
   </div>
-  <div class="charts-grid">
-    {{ chart_card("chartCusto", "Custo da Hora Útil por Agente (R$)", tall=True, wide=True,
-       note="Custo Hora Útil = salário mensal ÷ (Média de Horas Úteis por Dia × 22 dias úteis). Agentes com poucas horas úteis/dia aparecem com custo por hora mais alto.") }}
-    {{ chart_card("chartHoras", "Horas Úteis/Dia por Agente",
-       note="média de horas por dia trabalhado em que o agente esteve efetivamente em visita, do menor para o maior.") }}
-    {{ chart_card("chartHorasTrabDia", "Horas Trabalhadas por Dia (jornada total)",
-       note="jornada total do dia (chegada até saída, descontando almoço) — inclui deslocamento, diferente de \"Horas Úteis\" que só conta tempo dentro de imóveis.") }}
-    {{ chart_card("chartHorasTrabSemana", "Horas Trabalhadas por Semana",
-       note="soma da jornada diária ao longo da semana de cada agente, do menor para o maior.") }}
-  </div>
-  <div class="table-section">
-    <h3>💰 Custos, Horas e Produção — Visão Consolidada</h3>
-    <p class="table-hint">Clique no cabeçalho de qualquer coluna para ordenar. Liga horas trabalhadas, horas úteis, custo por hora e volume de trabalho num só lugar.</p>
+
+  {# ---------- 3. Por equipe ---------- #}
+  {% if custos_equipes %}
+  <div class="cst-equipes">
+    <h3 class="cst-titulo">👥 Comparação entre equipes</h3>
     <div class="table-wrap">
-      <table class="data-table sortable" id="tableCustos">
+      <table class="data-table">
         <thead><tr>
-          <th class="sticky-col">Agente</th><th>Equipe</th><th>Total Geral</th><th>Imóveis Abertos</th><th>Visitas/Dia</th>
-          <th>Horas Trab./Dia</th><th>Horas Trab./Semana</th><th>Horas Úteis/Dia</th><th>Custo Hora Útil</th>
+          <th>Equipe</th><th title="Agentes com dados no período">Agentes</th>
+          <th title="Média da jornada diária (chegada → saída)">Jornada/dia</th>
+          <th title="Média de horas dentro dos imóveis por dia">Horas úteis/dia</th>
+          <th title="Horas úteis ÷ jornada">Aproveitamento</th>
+          <th title="Folha da equipe ÷ horas úteis do mês da equipe">Custo hora útil</th>
+          <th title="Folha da equipe ÷ visitas do mês da equipe">Custo/visita</th>
+          <th title="Salário mensal × nº de agentes">Folha mensal</th>
         </tr></thead>
         <tbody>
-          {% for r in custos %}
+          {% for e in custos_equipes %}
           <tr>
-            <td class="sticky-col agent-name">{{ r.agente }}</td><td>{{ r.equipe }}</td>
-            <td class="num">{{ r.total_geral|br }}</td><td class="num">{{ r.abertos|br }}</td><td class="num">{{ r.visitas_dia|br(1) }}</td>
-            <td class="num">{{ r.horas_trab_dia|br(1) }}h</td><td class="num">{{ r.horas_trab_semana|br(1) }}h</td>
-            <td class="num">{{ r.horas_uteis_dia|br(1) }}h</td><td class="num">{{ r.custo_hora }}</td>
+            <td class="agent-name">{{ e.equipe }}{% if e.n_poucos == e.n %} <small class="cst-aviso" title="Todos os agentes desta equipe têm poucos dias no período">⚠ poucos dias</small>{% endif %}</td>
+            <td class="num">{{ e.n }}</td>
+            <td class="num">{{ e.horas_trab_dia|br(1) }}h</td>
+            <td class="num">{{ e.horas_uteis_dia|br(1) }}h</td>
+            <td class="num">{{ e.aproveitamento|br(0) }}%</td>
+            <td class="num"><span class="cst-pill cst-{{ e.faixa }}">R$ {{ e.custo_hora|br(2) }}</span></td>
+            <td class="num">R$ {{ e.custo_visita|br(2) }}</td>
+            <td class="num">R$ {{ e.folha|br(0) }}</td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </div>
+  {% endif %}
+
+  {# ---------- 4. Gráficos ---------- #}
+  <div class="charts-grid">
+    {{ cst_chart("chartCusto", "Custo da hora útil por agente (R$)",
+       [("#12B76A", "até R$ " ~ custo_faixa_medio ~ " — bom"), ("#F2B01E", "R$ " ~ custo_faixa_medio ~ " a " ~ custo_faixa_alto ~ " — atenção"), ("#E4572E", "acima de R$ " ~ custo_faixa_alto ~ " — alto")],
+       "<strong>Quanto menor, melhor.</strong> Custo alto significa poucas horas úteis por dia, não salário maior: todos têm o mesmo salário. Cálculo: salário ÷ (horas úteis/dia × " ~ dias_uteis_mes ~ " dias).", tall=True, wide=True) }}
+    {{ cst_chart("chartHoras", "Horas úteis por dia",
+       [("#E4572E", "menos de " ~ horas_uteis_baixo|br(1) ~ "h"), ("#F2B01E", horas_uteis_baixo|br(1) ~ "h a " ~ horas_uteis_alto|br(1) ~ "h"), ("#12B76A", horas_uteis_alto|br(1) ~ "h ou mais")],
+       "<strong>Quanto maior, melhor.</strong> Média de horas por dia trabalhado em que o agente esteve dentro de imóveis (cada visita conta até " ~ teto_visita_min ~ " min). Do menor para o maior.") }}
+    {{ cst_chart("chartHorasTrabDia", "Jornada por dia",
+       [("#6B62D6", "primeira chegada → última saída, sem o almoço")],
+       "Inclui deslocamento. Compare com as horas úteis ao lado: a diferença é o tempo fora de imóveis.") }}
+    {{ cst_chart("chartHorasTrabSemana", "Jornada por semana",
+       [("#29AEE0", "soma da jornada dos dias da semana")],
+       "Média das semanas de cada agente, do menor para o maior. Semanas incompletas (férias, atestado, feriado) puxam o valor para baixo.") }}
+  </div>
+
+  {# ---------- 5. Tabela detalhada ---------- #}
+  <div class="table-section">
+    <h3>💰 Detalhe por agente</h3>
+    <p class="table-hint">Clique no cabeçalho para ordenar. Passe o mouse sobre o título de cada coluna para ver o que ela significa. Linhas <span class="cst-esm">esmaecidas</span> = poucos dias no período (custo instável).</p>
+    <div class="table-wrap">
+      <table class="data-table sortable" id="tableCustos">
+        <thead><tr>
+          <th class="sticky-col">Agente</th><th>Equipe</th>
+          <th title="Dias com pelo menos uma visita no período">Dias</th>
+          <th title="Média de imóveis visitados por dia trabalhado">Visitas/Dia</th>
+          <th title="Média da jornada diária (chegada → saída, sem almoço)">Jornada/Dia</th>
+          <th title="Média de horas dentro de imóveis por dia (visita capada em {{ teto_visita_min }} min)">Horas Úteis/Dia</th>
+          <th title="Horas úteis ÷ jornada">Aproveit.</th>
+          <th title="Salário ÷ (horas úteis/dia × {{ dias_uteis_mes }} dias). Verde ≤ R$ {{ custo_faixa_medio }}, amarelo até R$ {{ custo_faixa_alto }}, vermelho acima">Custo Hora Útil</th>
+          <th title="Salário ÷ (visitas/dia × {{ dias_uteis_mes }} dias)">Custo/Visita</th>
+          <th title="Média da soma semanal da jornada">Jornada/Semana</th>
+          <th title="Imóveis abertos + fechados + recusados">Total Geral</th>
+          <th title="Imóveis efetivamente visitados">Imóveis Abertos</th>
+        </tr></thead>
+        <tbody>
+          {% for r in custos %}
+          <tr{% if r.poucos %} class="row-poucos" title="Poucos dias no período — custo instável"{% endif %}>
+            <td class="sticky-col agent-name">{{ r.agente }}</td><td>{{ r.equipe }}</td>
+            <td class="num">{{ r.dias_trabalhados|br }}</td>
+            <td class="num">{{ r.visitas_dia|br(1) }}</td>
+            <td class="num">{{ r.horas_trab_dia|br(1) }}h</td>
+            <td class="num">{{ r.horas_uteis_dia|br(1) }}h</td>
+            <td class="num">{% if r.aproveitamento is not none %}{{ r.aproveitamento|br(0) }}%{% else %}—{% endif %}</td>
+            <td class="num"><span class="cst-pill cst-{{ r.faixa }}">{{ r.custo_hora }}</span></td>
+            <td class="num">{% if r.custo_visita %}R$ {{ r.custo_visita|br(2) }}{% else %}—{% endif %}</td>
+            <td class="num">{{ r.horas_trab_semana|br(1) }}h</td>
+            <td class="num">{{ r.total_geral|br }}</td><td class="num">{{ r.abertos|br }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# ---------- 6. Outras atividades ---------- #}
   {% if outras_atividades %}
   <div class="table-section">
-    <h3>🚧 Outras Atividades — equipes fora do e-Visita</h3>
-    <p class="table-hint">Equipes com produção lançada manualmente em <code>data/outras_atividades.json</code> (não passam pelo e-Visita). "Vezes abaixo da meta" compara a produção por pessoa/dia com a meta de {{ 20 }} visitas/dia usada pra todo o resto do dashboard — é a prova objetiva de quão baixa está a produção, sem depender de opinião.</p>
+    <h3>🚧 Outras atividades — equipes fora do e-Visita</h3>
+    <p class="table-hint">Produção lançada à mão em <code>data/outras_atividades.json</code>. Contas: <strong>Visitas/dia/pessoa</strong> = visitas ÷ {{ dias_uteis_mes }} dias ÷ nº de pessoas. <strong>Custo por visita</strong> = custo da equipe no mês ÷ visitas. <strong>Vezes abaixo da meta</strong> = meta de {{ meta_visitas_dia }} visitas/dia ÷ visitas/dia/pessoa (a mesma meta do resto do painel).</p>
     <div class="table-wrap">
       <table class="data-table sortable" id="tableOutrasAtividades">
         <thead><tr>

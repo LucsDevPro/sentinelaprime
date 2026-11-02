@@ -34,6 +34,18 @@ LAZY = os.environ.get("SENTINELA_SEM_LAZY") != "1"   # partes pesadas em arquivo
 # data/outras_atividades.json).
 DIAS_UTEIS_MES_REF = 22
 META_VISITAS_DIA_REF = 20
+TETO_VISITA_MIN = 20       # = TETO_DURACAO_MEDIA_MIN do coletar_evisita.py (cada visita conta no máx. 20 min nas horas úteis)
+
+# Painel "Custos & Produtividade": faixas de cor e regra de confiabilidade.
+# Os gráficos (templates/charts.js) e as legendas (sections/custos.html) leem
+# estes mesmos valores — mudou aqui, muda em todo lugar.
+CUSTO_FAIXA_MEDIO = 100     # R$/h útil: até aqui = verde
+CUSTO_FAIXA_ALTO = 150      # acima daqui = vermelho (entre os dois = amarelo)
+HORAS_UTEIS_BAIXO = 1.5     # h/dia em visita: abaixo = vermelho
+HORAS_UTEIS_ALTO = 2.5      # h/dia em visita: a partir daqui = verde
+FRACAO_MIN_DIAS = 0.25      # agente com menos de 25% dos dias do agente que mais trabalhou
+                            # no período tem "poucos dias": custo dele é instável e fica de
+                            # fora do Menor/Maior custo (continua nas médias e na tabela)
 OUTRAS_ATIVIDADES_PATH = ROOT / "data" / "outras_atividades.json"
 
 
@@ -483,19 +495,107 @@ def build_kpi_geral(resumo):
                 total_recusados=total_recusados, total_geral=total_geral, pct_pendencia=pct_pendencia,
                 n_normal=n_normal, n_atencao=n_atencao, n_critico=n_critico)
 
+def _custos_base(resumo):
+    """Colunas numéricas limpas + corte de 'poucos dias' pro painel de custos."""
+    d = resumo.copy()
+    for col, novo in [("Média Horas Úteis/Dia", "_hu"), ("Média Horas Trabalhadas/Dia", "_ht"),
+                      ("Média Horas Trabalhadas/Semana", "_hs"), ("Dias Trabalhados", "_dias"),
+                      ("Visitas/Dia", "_vd")]:
+        d[novo] = pd.to_numeric(d[col], errors="coerce") if col in d.columns else float("nan")
+    d = d[d["CustoNum"].notna() & (d["_hu"] > 0)].copy()
+    if d.empty:
+        return d, 0
+    corte = max(2, int(round(FRACAO_MIN_DIAS * d["_dias"].max())))
+    d["_poucos"] = d["_dias"] < corte
+    return d, corte
+
+
+def _custo_agregado(d):
+    """Custo da hora útil do GRUPO = folha ÷ horas úteis do mês de todos juntos.
+    (A média simples dos custos individuais dá um número maior, porque quem
+    tem poucas horas úteis pesa o mesmo que quem tem muitas.)"""
+    horas_mes = (d["_hu"] * DIAS_UTEIS_MES_REF).sum()
+    return SALARIO_MENSAL * len(d) / horas_mes if horas_mes > 0 else None
+
+
+def _custo_visita_agregado(d):
+    visitas_mes = (d["_vd"] * DIAS_UTEIS_MES_REF).sum()
+    return SALARIO_MENSAL * len(d) / visitas_mes if visitas_mes > 0 else None
+
+
 def build_kpi_custos(resumo):
+    vazio = dict(custo_medio=0, custo_mediana=0, custo_min=0, custo_min_agente="—", custo_max=0, custo_max_agente="—",
+                 custo_visita=None, horas_dia_media=0, horas_semana_media=0, horas_uteis_media=0,
+                 aproveitamento=None, n_agentes=0, n_poucos_dias=0, corte_dias=0, custo_media_simples=0)
     if resumo.empty or "CustoNum" not in resumo.columns:
-        return dict(custo_medio=0, custo_min=0, custo_min_agente="—", custo_max=0, custo_max_agente="—",
-                    horas_dia_media=0, horas_semana_media=0, horas_uteis_media=0)
-    idx_min, idx_max = resumo["CustoNum"].idxmin(), resumo["CustoNum"].idxmax()
+        return vazio
+    d, corte = _custos_base(resumo)
+    if d.empty:
+        return vazio
+    confiaveis = d[~d["_poucos"]]
+    if confiaveis.empty:
+        confiaveis = d
+    idx_min, idx_max = confiaveis["CustoNum"].idxmin(), confiaveis["CustoNum"].idxmax()
     return dict(
-        custo_medio=resumo["CustoNum"].mean(),
-        custo_min=resumo.loc[idx_min, "CustoNum"], custo_min_agente=resumo.loc[idx_min, "Agente"],
-        custo_max=resumo.loc[idx_max, "CustoNum"], custo_max_agente=resumo.loc[idx_max, "Agente"],
-        horas_dia_media=resumo["Média Horas Trabalhadas/Dia"].mean(),
-        horas_semana_media=resumo["Média Horas Trabalhadas/Semana"].mean(),
-        horas_uteis_media=resumo["Média Horas Úteis/Dia"].mean(),
+        custo_medio=_custo_agregado(d),
+        custo_media_simples=d["CustoNum"].mean(),
+        custo_mediana=d["CustoNum"].median(),
+        custo_min=confiaveis.loc[idx_min, "CustoNum"], custo_min_agente=confiaveis.loc[idx_min, "Agente"],
+        custo_max=confiaveis.loc[idx_max, "CustoNum"], custo_max_agente=confiaveis.loc[idx_max, "Agente"],
+        custo_visita=_custo_visita_agregado(d),
+        horas_dia_media=d["_ht"].mean(),
+        horas_semana_media=d["_hs"].mean(),
+        horas_uteis_media=d["_hu"].mean(),
+        aproveitamento=(d["_hu"].sum() / d["_ht"].sum() * 100) if d["_ht"].sum() > 0 else None,
+        n_agentes=len(d), n_poucos_dias=int(d["_poucos"].sum()), corte_dias=corte,
     )
+
+
+def _faixa_custo(v):
+    if v is None or pd.isna(v):
+        return ""
+    return "alto" if v > CUSTO_FAIXA_ALTO else "medio" if v > CUSTO_FAIXA_MEDIO else "ok"
+
+
+def build_custos_rows(resumo):
+    """Linhas da tabela de custos: as colunas da planilha + aproveitamento,
+    custo por visita, faixa de cor e marcação de 'poucos dias'."""
+    if resumo.empty or "CustoNum" not in resumo.columns:
+        return []
+    d, _ = _custos_base(resumo)
+    extra = {i: r for i, r in d.iterrows()}
+    ordenado = resumo.sort_values("CustoNum", ascending=False)
+    linhas = records(ordenado, RESUMO_COLS)
+    for (idx, _), row in zip(ordenado.iterrows(), linhas):
+        r = extra.get(idx)
+        row["custo_num"] = n(ordenado.loc[idx, "CustoNum"])
+        row["faixa"] = _faixa_custo(row["custo_num"])
+        if r is None:
+            row.update(aproveitamento=None, custo_visita=None, poucos=False)
+            continue
+        row["aproveitamento"] = (r["_hu"] / r["_ht"] * 100) if r["_ht"] > 0 else None
+        row["custo_visita"] = (SALARIO_MENSAL / (r["_vd"] * DIAS_UTEIS_MES_REF)) if r["_vd"] > 0 else None
+        row["poucos"] = bool(r["_poucos"])
+    return linhas
+
+
+def build_custos_equipes(resumo):
+    """Uma linha por equipe, com o mesmo cálculo do KPI geral (folha ÷ horas úteis)."""
+    if resumo.empty or "CustoNum" not in resumo.columns:
+        return []
+    d, _ = _custos_base(resumo)
+    linhas = []
+    for equipe, g in d.groupby("Equipe"):
+        custo = _custo_agregado(g)
+        linhas.append(dict(
+            equipe=equipe, n=len(g), n_poucos=int(g["_poucos"].sum()), dias=int(g["_dias"].sum()),
+            horas_trab_dia=g["_ht"].mean(), horas_uteis_dia=g["_hu"].mean(),
+            aproveitamento=(g["_hu"].sum() / g["_ht"].sum() * 100) if g["_ht"].sum() > 0 else None,
+            custo_hora=custo, faixa=_faixa_custo(custo), custo_visita=_custo_visita_agregado(g),
+            folha=SALARIO_MENSAL * len(g),
+        ))
+    return sorted(linhas, key=lambda x: x["equipe"])
+
 
 def build_ausencias_agg(aus):
     heat = {d: {"Manhã": 0, "Tarde": 0} for d in DIA_ORDER}
@@ -858,7 +958,12 @@ def build_context(data):
         ponto_estrategico=records(pe.sort_values("Semana"), PE_COLS) if not pe.empty else [],
         pe_agente=pe["Agente"].iloc[0] if not pe.empty else "—",
         pe_semanas=pe["Semana"].nunique() if not pe.empty else 0,
-        custos=records(resumo.sort_values("CustoNum", ascending=False), RESUMO_COLS),
+        custos=build_custos_rows(resumo),
+        custos_equipes=build_custos_equipes(resumo),
+        dias_uteis_mes=DIAS_UTEIS_MES_REF, meta_visitas_dia=META_VISITAS_DIA_REF,
+        custo_faixa_medio=CUSTO_FAIXA_MEDIO, custo_faixa_alto=CUSTO_FAIXA_ALTO,
+        horas_uteis_baixo=HORAS_UTEIS_BAIXO, horas_uteis_alto=HORAS_UTEIS_ALTO,
+        teto_visita_min=TETO_VISITA_MIN,
         ranking=ranking_sem_nan(records(data["ranking"].sort_values("Posição"), RANKING_COLS)) if not data["ranking"].empty else [],
         ranking_tem_observacao=bool(not data["ranking"].empty and "Observação" in data["ranking"].columns),
         ranking_detalhe=records(data["ranking_detalhe"], RANKING_DET_COLS) if not data["ranking_detalhe"].empty else [],

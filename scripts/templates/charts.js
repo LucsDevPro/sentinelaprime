@@ -105,7 +105,7 @@ new Chart(document.getElementById('chartTeamStatus'), {
     type: 'bar',
     data: { labels: d.map(a => a.label),
       datasets: [{ label: 'Custo Hora Útil (R$)', data: d.map(a => a.v),
-        backgroundColor: d.map(a => a.v > 150 ? '#E4572E' : a.v > 100 ? '#F2B01E' : '#12B76A'), borderRadius: 4, barThickness: 12 }] },
+        backgroundColor: d.map(a => a.v > {{ custo_faixa_alto }} ? '#E4572E' : a.v > {{ custo_faixa_medio }} ? '#F2B01E' : '#12B76A'), borderRadius: 4, barThickness: 12 }] },
     options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
       scales: { x: { beginAtZero: true }, y: { grid: { display: false }, ticks: { font: { size: 9 } } } },
       plugins: { legend: { display: false } } }
@@ -119,7 +119,7 @@ new Chart(document.getElementById('chartTeamStatus'), {
     type: 'bar',
     data: { labels: d.map(a => a.label),
       datasets: [{ label: 'Horas Úteis/Dia', data: d.map(a => a.v),
-        backgroundColor: d.map(a => a.v < 1.5 ? '#E4572E' : a.v < 2.5 ? '#F2B01E' : '#12B76A'), borderRadius: 4, barThickness: 9 }] },
+        backgroundColor: d.map(a => a.v < {{ horas_uteis_baixo }} ? '#E4572E' : a.v < {{ horas_uteis_alto }} ? '#F2B01E' : '#12B76A'), borderRadius: 4, barThickness: 9 }] },
     options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
       scales: { x: { beginAtZero: true }, y: { grid: { display: false }, ticks: { font: { size: 8 } } } },
       plugins: { legend: { display: false } } }
