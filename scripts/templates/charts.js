@@ -104,10 +104,10 @@ new Chart(document.getElementById('chartTeamStatus'), {
   new Chart(document.getElementById('chartCusto'), {
     type: 'bar',
     data: { labels: d.map(a => a.label),
-      datasets: [{ label: 'Custo Hora Útil (R$)', data: d.map(a => a.v),
+      datasets: [{ label: 'Custo real da hora útil (R$)', data: d.map(a => a.v),
         backgroundColor: d.map(a => a.v > {{ custo_faixa_alto }} ? '#E4572E' : a.v > {{ custo_faixa_medio }} ? '#F2B01E' : '#12B76A'), borderRadius: 4, barThickness: 12 }] },
     options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-      scales: { x: { beginAtZero: true }, y: { grid: { display: false }, ticks: { font: { size: 9 } } } },
+      scales: { x: { beginAtZero: true, max: {{ custo_grafico_max }} }, y: { grid: { display: false }, ticks: { font: { size: 9 } } } },
       plugins: { legend: { display: false } } }
   });
 })();

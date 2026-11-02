@@ -210,6 +210,8 @@ a.id-link:hover { color: var(--h); border-bottom-style: solid; }
 .cst-guia p { margin: 0 0 12px; }
 .cst-conta { display: flex; flex-direction: column; gap: 6px; background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--blue); border-radius: var(--radius-sm); padding: 12px 16px; margin: 0 0 14px; }
 .cst-conta-t { font-size: 0.72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text3); }
+.cst-conta.cst-real { border-left-color: var(--orange); }
+.cst-ex { font-size: 0.78rem; color: var(--text2); line-height: 1.5; max-width: 110ch; }
 .cst-eq { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
 .cst-eq b { font-family: var(--f-num); font-size: 1.25rem; color: var(--h); font-variant-numeric: tabular-nums; }
 .cst-eq b.cst-res { color: var(--info-tx); font-size: 1.5rem; }
@@ -225,14 +227,10 @@ a.id-link:hover { color: var(--h); border-bottom-style: solid; }
 .cst-equipes { margin: 0 0 28px; }
 .cst-equipes .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); }
 .cst-equipes table.data-table td, .cst-equipes table.data-table th { font-size: 0.8rem; padding: 8px 12px; }
-.cst-aviso { color: var(--warn-tx); font-weight: 600; margin-left: 6px; }
 .cst-pill { display: inline-block; min-width: 74px; padding: 2px 9px; border-radius: 999px; font-weight: 700; text-align: center; }
 .cst-pill.cst-ok { background: rgba(31,179,107,.16); color: var(--ok-tx); }
 .cst-pill.cst-medio { background: rgba(247,181,0,.20); color: var(--warn-tx); }
 .cst-pill.cst-alto { background: rgba(240,64,47,.16); color: var(--bad-tx); }
-tr.row-poucos td { opacity: .55; font-style: italic; }
-tr.row-poucos td.sticky-col { opacity: 1; color: var(--text3); font-style: italic; }
-.cst-esm { opacity: .55; font-style: italic; }
 .legend-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 0.8rem; }
 .legend-table th, .legend-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; }
 .legend-table th { color: var(--h); font-weight: 600; }
