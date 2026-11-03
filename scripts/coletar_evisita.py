@@ -1410,10 +1410,11 @@ LIMITE_AGENTES_EVENTO_TURNO = 20
 # (confirmada / falta) NÃO mudam. Ponha True pra voltar ao modo antigo.
 CONFIRMAR_FERIAS_AUTOMATICAMENTE = False
 CONFIRMAR_CHUVA_AUTOMATICAMENTE = False
-# Data a partir da qual a regra de Possível Evento vale (None = vale pra TODOS os
-# períodos, inclusive os meses já fechados). Pra não mexer no passado, ponha a
-# data de início do 1º período que deve usar a regra, ex.: date(2026, 10, 1).
-EVENTO_COLETIVO_A_PARTIR_DE = None
+# Data a partir da qual a regra de Possível Evento vale. Padrão: Outubro/2026 em
+# diante — como as outras regras novas, não mexe nos meses já fechados (Maio a
+# Setembro). None = vale pra TODOS os períodos (Maio a Setembro reclassificariam
+# ~1.100 turnos e a média de pontos subiria 6 a 8 pontos por mês).
+EVENTO_COLETIVO_A_PARTIR_DE = date(2026, 10, 4)   # início da 1ª semana de Outubro/2026 (01 e 02/10 ainda são da semana de Setembro); None = todos os períodos
 CLASSIF_TURNO_SEM_LANCAMENTO = "Turno sem Lançamento"
 CLASSIF_POSSIVEL_EVENTO = "Possível Evento Externo ou Interno"
 

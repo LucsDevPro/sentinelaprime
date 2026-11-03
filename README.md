@@ -725,7 +725,8 @@ Regras e cuidados:
   entram como `pendente` e continuam contando como turno sem lançamento até a coordenação confirmar (antes,
   entravam já confirmadas). Decisões antigas não mudam. Voltar ao modo antigo:
   `CONFIRMAR_FERIAS_AUTOMATICAMENTE` / `CONFIRMAR_CHUVA_AUTOMATICAMENTE = True`.
-- **Só valer de uma data em diante:** `EVENTO_COLETIVO_A_PARTIR_DE = date(2026, 10, 1)` (None = todos os períodos).
+- **Desde quando vale:** `EVENTO_COLETIVO_A_PARTIR_DE = date(2026, 10, 4)` — Outubro/2026 em diante (a semana de 04/10 abre o mês); os meses fechados
+  (Maio a Setembro) não mudam. `None` aplica a todos os períodos.
 - **Painel de custos:** os dias esperados do custo real já descontam férias, atestado, folga e paralisações.
 - Testes: `python3 scripts/test_turno_evento.py`.
 
