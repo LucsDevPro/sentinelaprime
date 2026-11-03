@@ -55,3 +55,5 @@ Expediente: manhã 07–11h, tarde 13–17h (`HORA_EXPEDIENTE_*`).
   folga, treinamento e paralisações já saem dos dias esperados). É o que vale para comparar agentes.
 - Médias gerais = folha ÷ horas úteis de todos (não a média dos custos individuais). Faixas: verde ≤ R$ 100, amarelo ≤ R$ 150, vermelho acima; gráfico corta em R$ 300.
 - Tabela mensal por agente: mesmo cálculo, mês a mês (cada mês usa a aba Ranking do próprio mês).
+
+> Explicações longas e o histórico das correções do ranking e da ausência: `docs/REGRAS_DETALHADAS.md`.
