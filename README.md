@@ -710,6 +710,25 @@ Regras e cuidados:
   `{"2951": {"desde": "01/10/2026", "motivo": "texto sem dado de saúde"}}`. A detecção desses agentes vira
   **falta** a partir da data; só vira abono quando a coordenação lançar à mão.
 
+### Turno sem Lançamento × Possível Evento Externo/Interno (regra de 02/11/2026)
+
+- **Padrão:** toda ausência sem lançamento é **Turno sem Lançamento** e desconta pontos (−1,5 por turno).
+- **Antes de descontar** o sistema confere o cronograma: chuva, treinamento (`Reunião/Treinamento`), atestado
+  (`Ausência justificada`), férias, folga e reunião. Turno coberto por qualquer um deles não desconta.
+- **Evento coletivo, classificado sozinho como "Possível Evento Externo ou Interno" (sem desconto):**
+  1. `LIMITE_AGENTES_EVENTO_TURNO` (20) ou mais agentes, de qualquer equipe, sem lançamento no mesmo dia e turno;
+  2. todos os agentes ativos de uma equipe (2 ou mais) sem lançamento no turno. "Ativo" = não coberto pelo
+     cronograma naquele turno (quem está de férias não conta).
+  Equipes sob demanda (Bloqueio) ficam fora das duas regras. A aba Ausências mostra a classificação no começo
+  da Observação. Se o evento for de fato falta, lance um ajuste em `data/ajustes_ranking.json`.
+- **Detecção automática** (`data/deteccoes_pendentes.json`): detecções NOVAS de férias e de paralisação coletiva
+  entram como `pendente` e continuam contando como turno sem lançamento até a coordenação confirmar (antes,
+  entravam já confirmadas). Decisões antigas não mudam. Voltar ao modo antigo:
+  `CONFIRMAR_FERIAS_AUTOMATICAMENTE` / `CONFIRMAR_CHUVA_AUTOMATICAMENTE = True`.
+- **Só valer de uma data em diante:** `EVENTO_COLETIVO_A_PARTIR_DE = date(2026, 10, 1)` (None = todos os períodos).
+- **Painel de custos:** os dias esperados do custo real já descontam férias, atestado, folga e paralisações.
+- Testes: `python3 scripts/test_turno_evento.py`.
+
 ### Lançar, ajustar ou cancelar férias (formulário no GitHub)
 
 Em `atestado.html` escolha **Férias — definir ou ajustar** ou **Férias — cancelar** (ou vá em

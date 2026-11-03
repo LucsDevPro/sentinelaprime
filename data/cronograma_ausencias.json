@@ -716,5 +716,12 @@
     "motivo": "Ausência justificada",
     "inicio": "07/07/2026",
     "fim": "07/07/2026"
+  },
+  {
+    "alvo": "agente",
+    "id_agente": 3177,
+    "motivo": "Reunião/Treinamento",
+    "inicio": "05/10/2026",
+    "fim": "30/10/2026"
   }
 ]

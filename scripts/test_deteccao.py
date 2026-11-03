@@ -52,6 +52,10 @@ os.environ.setdefault("EVISITA_SENHA", "teste")
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 import coletar_evisita as ce  # noqa: E402
+# Estes testes cobrem o MODO AUTOMÁTICO (opcional) da detecção; o padrão novo
+# (detecção entra como pendente) é coberto por test_turno_evento.py.
+ce.CONFIRMAR_FERIAS_AUTOMATICAMENTE = True
+ce.CONFIRMAR_CHUVA_AUTOMATICAMENTE = True
 
 FALHAS = []
 

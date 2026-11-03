@@ -1218,10 +1218,15 @@ def atualizar_deteccoes_pendentes(eventos_detectados, caminho="data/deteccoes_pe
             fundido = casar_e_fundir(novo, anteriores_chuva, usados_chuva)
             if fundido:
                 finais.append(fundido)
-            else:  # paralisacao_coletiva nova — CONFIRMADA automaticamente como Chuva (padrão)
-                novo["status"] = "confirmada"
-                novo["categoria_coletiva"] = "Chuva"
-                novo["confirmado_automaticamente"] = True
+            else:  # paralisacao_coletiva nova
+                if CONFIRMAR_CHUVA_AUTOMATICAMENTE:
+                    novo["status"] = "confirmada"
+                    novo["categoria_coletiva"] = "Chuva"
+                    novo["confirmado_automaticamente"] = True
+                else:  # pendente: coordenação confirma o motivo (chuva, reunião, capacitação...); até lá vale o Possível Evento por turno
+                    novo["status"] = "pendente"
+                    novo["categoria_coletiva"] = None
+                    novo["confirmado_automaticamente"] = False
                 novo["detectado_em"] = datetime.now().strftime("%d/%m/%Y %H:%M")
                 finais.append(novo)
             continue
@@ -1239,10 +1244,14 @@ def atualizar_deteccoes_pendentes(eventos_detectados, caminho="data/deteccoes_pe
                 novo["motivo"] = ("Falta (passou de 30 dias de férias)" if novo.get("excesso_30_dias")
                                   else "Falta (agente sem abono automático)")
                 novo["confirmado_automaticamente"] = True
-            else:
+            elif CONFIRMAR_FERIAS_AUTOMATICAMENTE:
                 novo["status"] = "confirmada"
                 novo["motivo"] = "Férias"
                 novo["confirmado_automaticamente"] = True
+            else:  # pendente: continua contando como Turno sem Lançamento até a coordenação confirmar férias/atestado
+                novo["status"] = "pendente"
+                novo["motivo"] = None
+                novo["confirmado_automaticamente"] = False
             novo["categoria_coletiva"] = None
             novo["detectado_em"] = datetime.now().strftime("%d/%m/%Y %H:%M")
             finais.append(novo)
@@ -1378,6 +1387,36 @@ PRESENCA_MINIMA_FRACAO = 0.5
 # o agente trabalhou menos que esta fração dos dias esperados E tem pelo menos
 # este número de turnos sem lançamento. Provavelmente é férias/licença/atestado
 # que falta lançar no cronograma — a gestão deve conferir antes de punir.
+# --- Evento coletivo por TURNO (regra da coordenação, 02/11/2026) ---------
+# Turno sem lançamento é a regra: toda ausência que o cronograma não explica
+# (chuva, treinamento, atestado, férias, folga, reunião...) vira "Turno sem
+# Lançamento" e desconta pontos. A EXCEÇÃO é o padrão coletivo: quando vários
+# agentes ficam sem lançamento no mesmo turno, é muito mais provável um evento
+# externo (chuva, falta de energia...) ou interno (reunião, capacitação) do
+# que dezenas de faltas individuais coincidentes. Aí o turno é classificado
+# automaticamente como "Possível Evento Externo ou Interno" — sem desconto —
+# pra coordenação confirmar o motivo no cronograma. Dois gatilhos:
+#   1) LIMITE_AGENTES_EVENTO_TURNO ou mais agentes (de qualquer equipe) sem
+#      lançamento no MESMO dia e turno;
+#   2) TODOS os agentes ativos de uma equipe (2 ou mais) sem lançamento no turno.
+# "Ativo" = não coberto pelo cronograma naquele turno. Equipes sob demanda
+# (EQUIPES_SEM_DETECCAO_AUTOMATICA, ex.: Bloqueio) não entram nas duas regras.
+LIMITE_AGENTES_EVENTO_TURNO = 20
+# Detecção automática (data/deteccoes_pendentes.json): a regra agora é "ausência
+# sem lançamento = Turno sem Lançamento (desconta)" até alguém verificar. Por
+# isso as detecções NOVAS entram como "pendente" (continuam contando como turno
+# sem lançamento; o padrão coletivo cai na regra de Possível Evento acima) e só
+# viram férias/chuva quando a coordenação confirmar. Decisões já tomadas
+# (confirmada / falta) NÃO mudam. Ponha True pra voltar ao modo antigo.
+CONFIRMAR_FERIAS_AUTOMATICAMENTE = False
+CONFIRMAR_CHUVA_AUTOMATICAMENTE = False
+# Data a partir da qual a regra de Possível Evento vale (None = vale pra TODOS os
+# períodos, inclusive os meses já fechados). Pra não mexer no passado, ponha a
+# data de início do 1º período que deve usar a regra, ex.: date(2026, 10, 1).
+EVENTO_COLETIVO_A_PARTIR_DE = None
+CLASSIF_TURNO_SEM_LANCAMENTO = "Turno sem Lançamento"
+CLASSIF_POSSIVEL_EVENTO = "Possível Evento Externo ou Interno"
+
 AVISO_AFASTAMENTO_FRACAO_MAX = 0.7
 AVISO_AFASTAMENTO_TURNOS_MIN = 4
 AVISO_AFASTAMENTO_PERIODO_MAX_DIAS = 45   # só em períodos de ~1 mês (não no Acumulado)
@@ -3288,6 +3327,7 @@ def _preparar_ausencias(df_total, resultados, lista_cronograma=None, primeira_vi
     ]
 
     registros = []
+    ativos = {}  # (equipe, dia_fmt, turno) -> agentes avaliados e NÃO cobertos pelo cronograma (trabalharam ou não)
     feriados_validos = {datetime.strptime(f, "%d/%m/%Y").date() for f in _feriados_em_vigor()}
     dia_min_periodo = df_total["dia"].min()
     if primeira_visita is None:
@@ -3326,44 +3366,73 @@ def _preparar_ausencias(df_total, resultados, lista_cronograma=None, primeira_vi
                     if not ((sub_dia["hora_chegada"] >= ini) & (sub_dia["hora_chegada"] < fim)).any()
                 ]
 
+            dia_fmt = dia.strftime("%d/%m/%Y")
+            nomes_ausentes = {t[0] for t in turnos_ausentes}
+            if not sob_demanda:
+                for turno_nome, _, _ in turnos_oficiais:
+                    if turno_nome not in nomes_ausentes:  # trabalhou nesse turno: conta como ativo
+                        ativos[(res["equipe"], dia_fmt, turno_nome)] = ativos.get((res["equipe"], dia_fmt, turno_nome), 0) + 1
+
             for turno_nome, _, _ in turnos_ausentes:
+                # Antes de descontar: chuva, treinamento, atestado, férias, folga,
+                # reunião... (tudo que está no cronograma, inclusive as detecções confirmadas).
                 motivo = _obter_motivo_cronograma(res["id_agente"], res["equipe"], dia, lista_cronograma,
                                                   turno=turno_nome)
                 if motivo:
                     continue  # dia/turno já explicado (cronograma, ou detecção confirmada) — não é ausência a investigar
+                if not sob_demanda:
+                    ativos[(res["equipe"], dia_fmt, turno_nome)] = ativos.get((res["equipe"], dia_fmt, turno_nome), 0) + 1
                 registros.append({
                     "id_agente": res["id_agente"],
                     "nome_agente": res["nome_agente"],
                     "equipe": res["equipe"],
-                    "dia_fmt": dia.strftime("%d/%m/%Y"),
+                    "dia_fmt": dia_fmt,
                     "dia_semana": NOMES_DIA_SEMANA.get(dia_ts.weekday(), ""),
                     "turno": turno_nome,
-                    "observacao": "Sem visita registrada nesse turno — possível folga, atestado ou falta (confirmar com a escala)",
+                    "classificacao": CLASSIF_TURNO_SEM_LANCAMENTO,
+                    "sob_demanda": sob_demanda,
+                    "observacao": f"{CLASSIF_TURNO_SEM_LANCAMENTO} — sem visita registrada nesse turno e sem justificativa no cronograma "
+                                  "(possível folga, atestado ou falta; confirmar com a escala). Desconta pontos.",
                     "_fill": "E8E8E8",
                 })
 
-    # Detecta ausência COLETIVA: se TODOS os agentes de uma equipe (entre os
-    # que aparecem nos dados) faltaram no mesmo dia/turno, é mais provável
-    # que seja um motivo coletivo (reunião de equipe, chuva/intempérie,
-    # feriado local, evento) do que folga/atestado individual coincidente.
-    total_agentes_por_equipe = {}
-    for res in resultados:
-        total_agentes_por_equipe.setdefault(res["equipe"], set()).add(res["id_agente"])
-    total_agentes_por_equipe = {eq: len(ids) for eq, ids in total_agentes_por_equipe.items()}
-
-    contagem_ausentes = {}
+    # Ausência COLETIVA no turno -> "Possível Evento Externo ou Interno" (sem desconto).
+    # Ver LIMITE_AGENTES_EVENTO_TURNO acima: 20+ agentes no mesmo turno, ou a
+    # equipe inteira (agentes ativos) sem lançamento naquele turno.
+    ausentes_equipe, ausentes_global = {}, {}
     for r in registros:
-        chave = (r["equipe"], r["dia_fmt"], r["turno"])
-        contagem_ausentes[chave] = contagem_ausentes.get(chave, 0) + 1
+        if r["sob_demanda"]:
+            continue
+        ke = (r["equipe"], r["dia_fmt"], r["turno"])
+        kg = (r["dia_fmt"], r["turno"])
+        ausentes_equipe[ke] = ausentes_equipe.get(ke, 0) + 1
+        ausentes_global[kg] = ausentes_global.get(kg, 0) + 1
 
     for r in registros:
-        chave = (r["equipe"], r["dia_fmt"], r["turno"])
-        total_equipe = total_agentes_por_equipe.get(r["equipe"], 0)
-        if total_equipe >= 2 and contagem_ausentes[chave] == total_equipe:
-            r["observacao"] = (f"TODA A EQUIPE ({total_equipe} agentes) ausente nesse turno — "
-                                 f"possível reunião de equipe, chuva/intempérie ou evento — verificar")
-            r["_fill"] = "FFD9A0"
+        if r.pop("sob_demanda"):
+            continue
+        ke = (r["equipe"], r["dia_fmt"], r["turno"])
+        n_equipe, n_ativos = ausentes_equipe[ke], ativos.get(ke, 0)
+        n_global = ausentes_global[(r["dia_fmt"], r["turno"])]
+        muitos = n_global >= LIMITE_AGENTES_EVENTO_TURNO
+        toda_equipe = n_ativos >= 2 and n_equipe >= n_ativos
+        if not (muitos or toda_equipe):
+            continue
+        if (EVENTO_COLETIVO_A_PARTIR_DE is not None
+                and datetime.strptime(r["dia_fmt"], "%d/%m/%Y").date() < EVENTO_COLETIVO_A_PARTIR_DE):
+            continue  # período anterior à regra: continua Turno sem Lançamento
+        motivos = []
+        if muitos:
+            motivos.append(f"{n_global} agentes sem lançamento neste turno (limite de {LIMITE_AGENTES_EVENTO_TURNO})")
+        if toda_equipe:
+            motivos.append(f"toda a equipe ({n_equipe} de {n_ativos} agentes ativos) sem lançamento neste turno")
+        r["classificacao"] = CLASSIF_POSSIVEL_EVENTO
+        r["observacao"] = (f"{CLASSIF_POSSIVEL_EVENTO} — " + " e ".join(motivos) +
+                           ". Sem desconto de pontos; confirme o motivo (chuva, reunião, capacitação, evento) no cronograma.")
+        r["_fill"] = "FFD9A0"
 
+    for r in registros:
+        r.pop("sob_demanda", None)
     registros.sort(key=lambda r: (r["equipe"], r["dia_fmt"], r["turno"], r["nome_agente"]))
     return registros
 
@@ -3582,10 +3651,15 @@ def _preparar_ranking(resultados, regs_ausencias, data_max=None, lista_cronogram
     # diferentes podem ter o mesmo nome; contar por nome misturaria as
     # ausências de um com a pontuação do outro)
     turnos_por_dia = {}  # (id_agente, dia) -> nº de turnos sem lançamento
+    eventos_por_dia = {}  # (id_agente, dia_fmt) -> turnos classificados como possível evento (sem desconto)
     for r in regs_ausencias:
         id_ag = r.get("id_agente")
         if id_ag is None:
             continue
+        if r.get("classificacao") == CLASSIF_POSSIVEL_EVENTO:
+            k_ev = (id_ag, r.get("dia_fmt"))
+            eventos_por_dia[k_ev] = eventos_por_dia.get(k_ev, 0) + 1
+            continue  # não é Turno sem Lançamento: não desconta
         ausencias_por_agente[id_ag] = ausencias_por_agente.get(id_ag, 0) + 1
         chave_dia = (id_ag, r.get("dia_fmt"))
         turnos_por_dia[chave_dia] = turnos_por_dia.get(chave_dia, 0) + 1
@@ -3614,6 +3688,8 @@ def _preparar_ranking(resultados, regs_ausencias, data_max=None, lista_cronogram
                     # meia folga / meia ausência justificada: 0,5 dia por turno
                     justificados += 0.5 * _meios_turnos_no_dia(
                         res["id_agente"], res["equipe"], d, lista_cronograma)
+                    # turnos classificados como possível evento coletivo: 0,5 dia cada
+                    justificados += 0.5 * eventos_por_dia.get((res["id_agente"], d.strftime("%d/%m/%Y")), 0)
             # Dia em andamento: quem ainda não visitou hoje não "deve" o dia de hoje.
             hoje = _hoje_local()
             if hoje in dias_do_mes and hoje not in dias_trab:
