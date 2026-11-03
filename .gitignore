@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+# páginas/partes de teste geradas localmente (veja CLAUDE.md)
+_teste*
+partes/_teste*
